@@ -1,4 +1,4 @@
-#include "tar_parser.hpp"
+#include "../include/tar_parser.hpp"
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -23,6 +23,10 @@ void parse_tar(const fs::path &tar_path) {
     return;
   }
 
+  // Extracted destination path
+  fs::path output = "test_env/output";
+  fs::create_directories(output);
+
   while (1) {
     TarHeader header;
 
@@ -45,12 +49,38 @@ void parse_tar(const fs::path &tar_path) {
     // Get the file size (parse_octal (const char*, n) -> size
     size_t file_size = parse_octal(header.size, sizeof(header.size));
 
-    std::cout << "Found File: " << file_name << " (" << file_size
-              << " bytes)\n";
+    fs::path out_file_path = output / file_name;
+    fs::create_directories(out_file_path.parent_path());
 
-    size_t blocks_to_skip = (file_size + 511) / 512;
+    std::ofstream out_file(out_file_path, std::ios::binary);
+    if (!out_file.is_open()) {
+      std::cerr << "Error could not create output files!\n";
+      return;
+    }
 
-    // Move the file reading cursor forward on the disk
-    file.seekg(blocks_to_skip * 512, std::ios::cur);
+    std::cout << "Extracting " << file_name << " (" << file_size
+              << " bytes)...\n";
+
+    // Read 512 Bytes into the buffer
+    char buffer[512];
+    size_t bytes_left_to_read = file_size;
+
+    // Total '512' Blocks occupied by file
+    size_t total_blocks = (file_size + 511) / 512;
+
+    for (int i = 0; i < total_blocks; ++i) {
+      file.read(buffer, 512);
+
+      // Number of Actual bytes to write
+      size_t bytes_to_write =
+          (bytes_left_to_read > 512) ? 512 : bytes_left_to_read;
+
+      // write from the buffer to file
+      out_file.write(buffer, bytes_to_write);
+
+      bytes_left_to_read -= bytes_to_write;
+    }
+
+    out_file.close();
   }
 }
