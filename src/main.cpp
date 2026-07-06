@@ -1,21 +1,36 @@
+#include "../include/colors.hpp"
 #include "../include/tar_parser.hpp"
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 
 namespace fs = std::filesystem;
 
-int main() {
+int main(int argc, char *argv[]) {
   // File location
-  fs::path archive_path = "test_env/sample.tar";
 
-  std::ifstream file(archive_path, std::ios::binary);
-  if (!file.is_open()) {
-    std::cerr << "Could not open " << archive_path << "\n";
+  if (argc == 2) {
+    std::cerr << BOLD << RED << "fatal:" << RESET
+              << " destination path required\n";
+    return 1;
+  }
+  if (argc == 1) {
+    std::cerr << BOLD << RED << "fatal:" << RESET
+              << " source and destination path required\n";
     return 1;
   }
 
-  parse_tar(archive_path);
+  // fs::path archive_path = "test_env/sample.tar";
+
+  fs::path archive_path = argv[1];
+  fs::path destination_path = argv[2];
+
+  if (!fs::exists(archive_path)) {
+    std::cerr << BOLD << RED << "fatal:" << RESET << " Target file '"
+              << archive_path.string() << "' does not exist!\n";
+    return 1;
+  }
+
+  parse_tar(archive_path, destination_path);
 
   return 0;
 }
