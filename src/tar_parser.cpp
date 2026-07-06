@@ -1,4 +1,5 @@
 #include "../include/tar_parser.hpp"
+#include "../include/colors.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -23,7 +24,7 @@ void show_progress(std::string &task_name, double current, double total) {
   }
 
   std::string bar = "[";
-  for (int i = 0; i < progress_block; ++i) {
+  for (int i = 0; i < bar_width; ++i) {
     if (i < progress_block) {
       bar += "#";
     } else
@@ -45,16 +46,19 @@ size_t parse_octal(const char *octal_str, size_t max_chars) {
   }
 }
 
-void parse_tar(const fs::path &tar_path) {
+void parse_tar(const fs::path &tar_path, const fs::path &out_path) {
   std::ifstream file(tar_path, std::ios::binary);
   if (!file.is_open()) {
-    std::cerr << "Failed to open archive " << tar_path << "\n";
+    std::cerr << BOLD << RED << "fatal:" << RESET << "Failed to open archive "
+              << tar_path << "\n";
     return;
   }
 
   // Extracted destination path
-  fs::path output = "test_env/output";
-  fs::create_directories(output);
+  // fs::path output = "test_env/output"; - hardcoded destination
+  if (!fs::exists(out_path)) {
+    fs::create_directories(out_path);
+  }
 
   while (1) {
     TarHeader header;
@@ -68,7 +72,7 @@ void parse_tar(const fs::path &tar_path) {
 
     // Check if we reached the end of archieve
     if (header.name[0] == '\0') {
-      std::cout << "Reached the end of archive\n";
+      std::cout << '\n' << BOLD << "Extraction complete" << RESET << '\n';
       break;
     }
 
@@ -78,16 +82,23 @@ void parse_tar(const fs::path &tar_path) {
     // Get the file size (parse_octal (const char*, n) -> size
     size_t file_size = parse_octal(header.size, sizeof(header.size));
 
-    fs::path out_file_path = output / file_name;
-    fs::create_directories(out_file_path.parent_path());
+    fs::path out_file_path = out_path / file_name;
+
+    // check if its an directory
+    if (header.typeflag == '5' ||
+        (!file_name.empty() && file_name.back() == '/')) {
+      fs::create_directories(out_file_path);
+      continue;
+    }
 
     std::ofstream out_file(out_file_path, std::ios::binary);
     if (!out_file.is_open()) {
-      std::cerr << "Error could not create output files!\n";
+      std::cerr << RED << BOLD << "fatal:" << RESET
+                << " error opening files!\n";
       return;
     }
 
-    std::string task = "Extracting " + file_name;
+    std::string task = "Extracting " + out_file_path.string();
     if (task.length() > 80) {
       task = task.substr(0, 77) + "...";
     } else {
@@ -105,6 +116,8 @@ void parse_tar(const fs::path &tar_path) {
     if (file_size == 0) {
       show_progress(task, 0, 0);
       std::cout << '\n';
+      out_file.close();
+      continue;
     }
 
     for (int i = 0; i < total_blocks; ++i) {
@@ -123,12 +136,9 @@ void parse_tar(const fs::path &tar_path) {
 
       show_progress(task, static_cast<double>(bytes_written_so_far),
                     static_cast<double>(file_size));
-
-      if (i == total_blocks - 1) {
-        std::cout << '\n';
-      }
     }
 
+    std::cout << '\n';
     out_file.close();
   }
 }
