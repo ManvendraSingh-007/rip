@@ -1,11 +1,40 @@
 #include "../include/tar_parser.hpp"
+#include <cstddef>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iostream>
+#include <ostream>
 #include <string>
 
 namespace fs = std::filesystem;
+
+void show_progress(std::string &task_name, double current, double total) {
+  double percentage = 0.0;
+  int bar_width = 50;
+  int progress_block = 0;
+
+  if (total > 0) {
+    percentage = (current / total) * 100.0;
+    progress_block = static_cast<int>((current / total) * bar_width);
+  } else {
+    percentage = 100.0;
+    progress_block = bar_width;
+  }
+
+  std::string bar = "[";
+  for (int i = 0; i < progress_block; ++i) {
+    if (i < progress_block) {
+      bar += "#";
+    } else
+      bar += " ";
+  }
+
+  bar += "]";
+
+  std::cout << "\r" << task_name << " " << bar << " "
+            << static_cast<int>(percentage) << "%" << std::flush;
+}
 
 size_t parse_octal(const char *octal_str, size_t max_chars) {
   std::string str(octal_str, max_chars);
@@ -58,8 +87,13 @@ void parse_tar(const fs::path &tar_path) {
       return;
     }
 
-    std::cout << "Extracting " << file_name << " (" << file_size
-              << " bytes)...\n";
+    std::string task = "Extracting " + file_name;
+    if (task.length() > 80) {
+      task = task.substr(0, 77) + "...";
+    } else {
+      int padding = 80 - task.length();
+      task += std::string(padding, ' ');
+    }
 
     // Read 512 Bytes into the buffer
     char buffer[512];
@@ -67,6 +101,11 @@ void parse_tar(const fs::path &tar_path) {
 
     // Total '512' Blocks occupied by file
     size_t total_blocks = (file_size + 511) / 512;
+
+    if (file_size == 0) {
+      show_progress(task, 0, 0);
+      std::cout << '\n';
+    }
 
     for (int i = 0; i < total_blocks; ++i) {
       file.read(buffer, 512);
@@ -77,8 +116,17 @@ void parse_tar(const fs::path &tar_path) {
 
       // write from the buffer to file
       out_file.write(buffer, bytes_to_write);
-
       bytes_left_to_read -= bytes_to_write;
+
+      // Calculate how many actual payload bytes have been written so far
+      size_t bytes_written_so_far = file_size - bytes_left_to_read;
+
+      show_progress(task, static_cast<double>(bytes_written_so_far),
+                    static_cast<double>(file_size));
+
+      if (i == total_blocks - 1) {
+        std::cout << '\n';
+      }
     }
 
     out_file.close();
