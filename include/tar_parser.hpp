@@ -1,6 +1,5 @@
 #pragma once
 #include <filesystem>
-#include <string>
 
 // The standard POSIX TAR header structure (512 bytes total)
 struct TarHeader {
@@ -24,4 +23,5 @@ struct TarHeader {
 };
 
 size_t parse_octal(const char *octal_str, size_t max_chars);
-void parse_tar(const std::filesystem::path &tar_path);
+void parse_tar(const std::filesystem::path &tar_path,
+               const std::filesystem::path &out_path);
