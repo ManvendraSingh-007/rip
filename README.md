@@ -16,7 +16,7 @@ C++ compiler supporting **C++17** or higher (gcc, clang, or msvc)
 Clone the repository and compile the source code using your preferred compiler:
 
 ```bash
-cmake --build /build
+cmake -S . -B build && cmake --build build
 ```
 
 ### Usage
