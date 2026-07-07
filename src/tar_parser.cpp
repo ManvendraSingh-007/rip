@@ -1,5 +1,6 @@
 #include "../include/tar_parser.hpp"
 #include "../include/colors.hpp"
+#include "arg_parser.hpp"
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -9,6 +10,12 @@
 #include <string>
 
 namespace fs = std::filesystem;
+
+void extraction_complete(const ArgParser *parser, std::string &mode) {
+  if (mode == "extract") {
+    std::cout << "extraction";
+  }
+}
 
 void show_progress(std::string &task_name, double current, double total) {
   double percentage = 0.0;
@@ -46,21 +53,33 @@ size_t parse_octal(const char *octal_str, size_t max_chars) {
   }
 }
 
-void parse_tar(const fs::path &tar_path, const fs::path &out_path) {
-  std::ifstream file(tar_path, std::ios::binary);
+void engine(const ArgParser *parser) {
+  // check if its extract mode
+  if (parser->is_extract()) {
+    if (parse_tar(parser->get_source_file(), parser->get_destination_dir())) {
+      extraction_complete(&parser, "extract");
+    }
+  }
+  if (parser->is_extract() && parser->is_verbose()) {
+  }
+}
+
+bool parse_tar(const std::string &source, const std::string &destination) {
+  std::ifstream file(source, std::ios::binary);
   if (!file.is_open()) {
     std::cerr << BOLD << RED << "fatal:" << RESET << "Failed to open archive "
-              << tar_path << "\n";
-    return;
+              << source << "\n";
+    return false;
   }
 
   // Extracted destination path
   // fs::path output = "test_env/output"; - hardcoded destination
-  if (!fs::exists(out_path)) {
-    fs::create_directories(out_path);
+  // -- check dir exist using parser object
+  if (!fs::exists(destination)) {
+    fs::create_directories(destination);
   }
 
-  while (1) {
+  while (true) {
     TarHeader header;
 
     // Read 512 Bytes into the space allocated for header
@@ -72,8 +91,7 @@ void parse_tar(const fs::path &tar_path, const fs::path &out_path) {
 
     // Check if we reached the end of archieve
     if (header.name[0] == '\0') {
-      std::cout << '\n' << BOLD << "Extraction complete" << RESET << '\n';
-      break;
+      return true;
     }
 
     // This will convert the header.name (char array) into clean C++ string
@@ -82,7 +100,7 @@ void parse_tar(const fs::path &tar_path, const fs::path &out_path) {
     // Get the file size (parse_octal (const char*, n) -> size
     size_t file_size = parse_octal(header.size, sizeof(header.size));
 
-    fs::path out_file_path = out_path / file_name;
+    fs::path out_file_path = destination / file_name;
 
     // check if its an directory
     if (header.typeflag == '5' ||
@@ -95,7 +113,7 @@ void parse_tar(const fs::path &tar_path, const fs::path &out_path) {
     if (!out_file.is_open()) {
       std::cerr << RED << BOLD << "fatal:" << RESET
                 << " error opening files!\n";
-      return;
+      return false;
     }
 
     std::string task = "Extracting " + out_file_path.string();
