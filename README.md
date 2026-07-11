@@ -1,16 +1,15 @@
 # rip
 
-A fast, tiny command-line file extractor written in modern C++, uses standard c++ libraries and currently optimized for extracting `.tar` archives.
+A fast, tiny command-line file extractor written in modern C++, uses standard c++ libraries, it was originally started as an generic file extractor targeting common compressed files like `tar`, but now i am working on creating custom `.rip` archive and an custom `.rip` extractor.
 
 ## Features
 
-- **Lightweight & Fast:** Built using zero-copy block buffering (`file.read`) for rapid disk transfers.
 - **Cross-Platform Support:** Linux, macOS, and modern Windows terminals.
 
 ## Getting Started
 
 ### Prerequisites
-C++ compiler supporting **C++17** or higher (gcc, clang, or msvc)
+C++ compiler supporting **C++20** or higher (gcc, clang, or msvc)
 
 ### Compilation
 Clone the repository and compile the source code using your preferred compiler:
@@ -20,14 +19,14 @@ cmake -S . -B build && cmake --build build
 ```
 
 ### Usage
-To extract a standard TAR archive, simply execute `rip` followed by the path to the target file and detination source directory:
+--
 
 ```bash
 ./rip ~/path_to/archive.tar ~/detination/
 ```
 ## Roadmap
-- [x] Streamlined TAR block parser
-- [ ] Support for gzip decompressed streams (`.tar.gz`)
+- [x] Designig custom `.rip` archive
+- [ ] Support for compression and extraction
 - [ ] Multi-thread un-archiving pipelines
 
 ## License
