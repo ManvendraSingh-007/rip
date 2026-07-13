@@ -7,6 +7,8 @@
 //   uint16_t version       = 1
 //   uint32_t entryCount
 //   --- --- --- --- ---
+//   TOC = Table of content
+//   --- --- --- --- ---
 //   uint16_t nameLen
 //   char     name[nameLen]
 //   uint64_t dataOffset     // absolute offset from start of file
@@ -16,13 +18,17 @@
 //   --- --- --- --- ---
 //   [raw file bytes, back to back, one per entry, in TOC order]
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
+#include <iostream>
 #include <istream>
 #include <ostream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Little-endian binary I/O helpers (portable across host endianness)
@@ -70,6 +76,9 @@ template <typename T> T readLE(std::istream &is) {
   return value;
 }
 
+// --------------------------
+// TOC
+// --------------------------
 struct Entry {
   std::string name;
   uint64_t dataOffset = 0;
@@ -80,4 +89,36 @@ struct Entry {
 
 constexpr char kMagic[4] = {'R', 'I', 'P', '1'};
 constexpr uint16_t kVersion = 1;
-constexpr size_t kHeaderSize = 4 + 2 + 4;
+constexpr size_t kHeaderSize = 4 + 2 + 4; // magic + version + entryCount
+
+void createArchive(const std::string &archivePath,
+                   const std::vector<std::string> &inputPaths) {
+
+  // Gather file Metadata
+  std::vector<Entry> entries;
+  entries.reserve(inputPaths.size());
+
+  for (const auto &p : inputPaths) {
+    std::filesystem::path path(p);
+    if (!std::filesystem::is_regular_file(path)) {
+      std::cerr << "Skipping (not an regular file): " << p << "\n";
+      continue;
+    }
+
+    Entry e;
+    e.name = path.filename().string();
+    e.dataSize = std::filesystem::file_size(path);
+    entries.push_back(std::move(e));
+  }
+
+  // Compute toc + data offsets
+  size_t toc = 0;
+  for (const auto &e : entries)
+    toc += 8 + 8 + 4 + 1 + e.name.size();
+
+  uint64_t runningOffset = kHeaderSize + toc;
+  for (auto &e : entries) {
+    e.dataOffset = runningOffset;
+    runningOffset += e.dataSize;
+  }
+}
