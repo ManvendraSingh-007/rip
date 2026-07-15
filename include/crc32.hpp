@@ -21,10 +21,14 @@ public:
     }
   }
 
-  uint32_t compute(const uint8_t *data, size_t len) const {
-    uint32_t crc = 0xFFFFFFFFu;
+  uint32_t compute(const uint8_t *data, size_t len,
+                   uint32_t current_crc = 0) const {
+    uint32_t crc =
+        (current_crc == 0) ? 0xFFFFFFFFu : (current_crc ^ 0xFFFFFFFFu);
+
     for (size_t i = 0; i < len; ++i)
       crc = table_[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+
     return crc ^ 0xFFFFFFFFu;
   }
 

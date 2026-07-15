@@ -18,10 +18,12 @@
 //   --- --- --- --- ---
 //   [raw file bytes, back to back, one per entry, in TOC order]
 
-#include <algorithm>
+#include "../../include/crypto/crc32.hpp"
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <ios>
 #include <iostream>
 #include <istream>
 #include <ostream>
@@ -30,9 +32,7 @@
 #include <type_traits>
 #include <vector>
 
-// ---------------------------------------------------------------------------
 // Little-endian binary I/O helpers (portable across host endianness)
-// ---------------------------------------------------------------------------
 template <typename T> void writeLE(std::ostream &os, T value) {
   static_assert(std::is_unsigned<T>::value, "writeLE expects unsigned int");
 
@@ -76,9 +76,7 @@ template <typename T> T readLE(std::istream &is) {
   return value;
 }
 
-// --------------------------
 // TOC
-// --------------------------
 struct Entry {
   std::string name;
   uint64_t dataOffset = 0;
@@ -91,6 +89,7 @@ constexpr char kMagic[4] = {'R', 'I', 'P', '1'};
 constexpr uint16_t kVersion = 1;
 constexpr size_t kHeaderSize = 4 + 2 + 4; // magic + version + entryCount
 
+static const Crc32 crc;
 void createArchive(const std::string &archivePath,
                    const std::vector<std::string> &inputPaths) {
 
@@ -120,5 +119,52 @@ void createArchive(const std::string &archivePath,
   for (auto &e : entries) {
     e.dataOffset = runningOffset;
     runningOffset += e.dataSize;
+  }
+
+  // Writing header + TOC
+  std::ofstream out(archivePath, std::ios::binary);
+  if (!out)
+    std::runtime_error("Cannot open archive for writing " + archivePath + "\n");
+
+  // Writing header - magic, version, entryCount
+  out.write(kMagic, 4); // Single byte type; no endian conversion needed
+  writeLE<uint16_t>(out, kVersion);
+  writeLE<uint32_t>(out, static_cast<uint32_t>(entries.size()));
+
+  for (size_t i = 0; i < entries.size(); ++i) {
+    if (!std::filesystem::is_regular_file(inputPaths[i]))
+      continue;
+    std::ifstream in(inputPaths[i], std::ios::binary);
+    uint8_t buffer[1 << 16];
+
+    entries[i].crc32 = 0;
+    if (entries[i].dataSize > 0) {
+      while (in) {
+        in.read(reinterpret_cast<char *>(buffer), (1 << 16));
+        std::streamsize got = in.gcount();
+        if (got <= 0)
+          break;
+        entries[i].crc32 = crc.compute(buffer, got, entries[i].crc32);
+      }
+    }
+  }
+
+  for (const auto &e : entries) {
+    writeLE<uint64_t>(out, e.dataOffset);
+    writeLE<uint64_t>(out, e.dataSize);
+    writeLE<uint32_t>(out, e.crc32);
+    out.write(e.name.data(), e.name.size());
+  }
+
+  for (size_t i = 0; i < entries.size(); ++i) {
+    std::ifstream in(inputPaths[i], std::ios::binary);
+    char buffer[1 << 16];
+    while (in) {
+      in.read(reinterpret_cast<char *>(buffer), (1 << 16));
+      std::streamsize got = in.gcount();
+      if (got <= 0)
+        break;
+      out.write(reinterpret_cast<const char *>(buffer), got);
+    }
   }
 }
