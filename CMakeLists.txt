@@ -13,7 +13,6 @@ include_directories(include)
 # Define files to compile
 add_executable(rip 
     src/main.cpp 
-    src/tar_parser.cpp
-    src/arg_parser.cpp
+    src/rip_archive.cpp
 )
 
