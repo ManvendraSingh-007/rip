@@ -12,5 +12,6 @@ int main() {
                                          "test_env/game.py"};
 
   createArchive(archivePath, inputPaths);
+  listArchive(archivePath);
   return 0;
 }
