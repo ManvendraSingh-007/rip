@@ -1,7 +1,7 @@
 // crc32.cpp
 //
 // ---------------------------------------------------------------------------
-// CRC32 (standard polynomial 0xEDB88320), built by hand — no external lib.
+// CRC32 (standard polynomial 0xEDB88320)
 // ---------------------------------------------------------------------------
 
 #pragma once
