@@ -26,6 +26,7 @@
 #include <filesystem>
 #include <fstream>
 #include <ios>
+#include <iosfwd>
 #include <iostream>
 #include <istream>
 #include <ostream>
@@ -273,13 +274,41 @@ void extractArchive(const std::string &archivePath,
 
   auto entries = readToc(in);
   std::filesystem::create_directories(outputDir);
-
   constexpr size_t bufferSize = 1 << 16;
   uint8_t buffer[bufferSize];
+
   for (const auto &e : entries) {
     in.seekg(static_cast<std::streamsize>(e.dataOffset));
-    if (e.dataSize > 0) {
-      in.read(reinterpret_cast<char *>(buffer), bufferSize);
+
+    uint32_t eCrc32 = 0;
+    size_t bytesRemaining = e.dataSize; // Track remaining bytes
+
+    std::filesystem::path outPath = std::filesystem::path(outputDir) / e.name;
+    std::ofstream out(outPath, std::ios::binary);
+    if (!out) {
+      throw std::runtime_error("[CRITICAL] Cannot write file " +
+                               outPath.string());
+    }
+
+    while (in && bytesRemaining > 0) {
+      // Don't read past the current entry's boundary
+      size_t toRead = std::min(bufferSize, bytesRemaining);
+      in.read(reinterpret_cast<char *>(buffer), toRead);
+      std::streamsize got = in.gcount();
+      if (got <= 0)
+        break;
+
+      eCrc32 = crc.compute(buffer, static_cast<size_t>(got), eCrc32);
+      out.write(reinterpret_cast<const char *>(buffer), got);
+      bytesRemaining -=
+          static_cast<size_t>(got); // Decrease by bytes successfully read
+    }
+
+    if (eCrc32 != e.crc32) {
+      std::cerr << "[WARN] CRC mismatch for " << e.name
+                << " (archive may be corrupt)\n";
     }
   }
+
+  std::cout << "Extraction Complete\n";
 }
