@@ -20,9 +20,11 @@
 
 #include "../include/rip_archive.hpp"
 #include "../include/crc32.hpp"
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -30,6 +32,7 @@
 #include <iostream>
 #include <istream>
 #include <ostream>
+#include <ratio>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -311,4 +314,43 @@ void extractArchive(const std::string &archivePath,
   }
 
   std::cout << "Extraction Complete\n";
+}
+
+void runBenchmarkTest(std::string &archivePath, std::string &outputDir) {
+
+  std::cout << "Starting Benchamark....\n";
+
+  auto startTime = std::chrono::high_resolution_clock::now();
+  try {
+    extractArchive(archivePath, outputDir);
+  } catch (const std::exception &e) {
+    std::cerr << "Benchmark Failed: " << e.what() << "\n";
+    return;
+  }
+
+  auto endTime = std::chrono::high_resolution_clock::now();
+
+  std::chrono::duration<double, std::milli> durationMs = endTime - startTime;
+  double durationSec = durationMs.count() / 1000.0;
+
+  std::ifstream in(archivePath, std::ios::binary);
+  auto entries = readToc(in);
+
+  double totalBytesExtracted = 0;
+
+  for (const auto &e : entries) {
+    totalBytesExtracted += e.dataSize;
+  }
+
+  std::cout << "\n=== Benchmark Results ===\n";
+  std::cout << "Execution Time : " << durationMs.count() << " ms ("
+            << durationSec << " seconds)\n";
+
+  if (totalBytesExtracted > 0) {
+    double mbBytes =
+        static_cast<double>(totalBytesExtracted) / (1024.0 * 1024.0);
+    std::cout << "Total Data     : " << mbBytes << " MB\n";
+    std::cout << "Throughput     : " << (mbBytes / durationSec) << " MB/s\n";
+  }
+  std::cout << "=========================\n";
 }
