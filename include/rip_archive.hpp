@@ -7,3 +7,5 @@ void createArchive(const std::string &archivePath,
 void listArchive(const std::string &archivePath);
 void extractArchive(const std::string &archivePath,
                     const std::string &outputDir);
+
+void runBenchmarkTest(std::string &archivePath, std::string &outputDir);
