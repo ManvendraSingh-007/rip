@@ -1,7 +1,6 @@
 #pragma once
 #include "rip_archive.hpp"
 #include <cstddef>
-#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -52,6 +51,7 @@ inline void Parser::argParser(int argc, char *argv[]) {
       if (len > 2) {
         detailedFlags.push_back(cOption.substr(2));
       }
+      ++index;
       continue; // Move to next argument safely
     }
 
@@ -62,11 +62,13 @@ inline void Parser::argParser(int argc, char *argv[]) {
         charFlags.push_back(argv[index][i + 1]);
         ++i;
       }
+      ++index;
       continue;
     }
 
     if (len > 4 && cOption.substr(len - 4) == ".rip") {
       sourceFiles.push_back(cOption);
+      ++index;
       continue;
     }
 
@@ -79,20 +81,23 @@ inline void Parser::argParser(int argc, char *argv[]) {
 inline void Parser::execParsed() {
   namespace fs = std::filesystem;
 
-  std::vector<fs::path> directories;
+  std::vector<std::string> directories;
   std::vector<std::string> dFiles;
 
   for (const auto &x : mislaneousFlags) {
     fs::path path(x);
+    fs::file_status fStatus = fs::status(path);
 
-    if (fs::is_directory(path)) {
-      directories.push_back(path);
-    }
-
-    if (fs::exists(path)) {
+    if (fs::is_directory(fStatus)) {
+      directories.push_back(x);
+    } else if (fs::is_regular_file(fStatus)) {
       dFiles.push_back(x);
     } else {
-      fs::create_directory(fs::path(x).parent_path());
+      if (path.has_extension()) {
+        dFiles.push_back(x);
+      } else {
+        directories.push_back(x);
+      }
     }
   }
 
@@ -143,10 +148,66 @@ inline void Parser::execParsed() {
       std::cerr << "Error : no rip file provided\n";
       return;
     }
-
-    for (const auto &a : sourceFiles) {
-      if (opts.verbose) {
-        extractArchive(a)
+    if (directories.empty()) {
+      for (const auto &a : sourceFiles) {
+        if (opts.list) {
+          listArchive(a);
+          std::cout << '\n';
+        }
+        if (opts.verbose)
+          extractArchive(a, {'v'});
+        if (!opts.verbose) {
+          extractArchive(a);
+        }
+      }
+    } else if (!directories.empty()) {
+      size_t n1 = sourceFiles.size();
+      size_t n2 = directories.size();
+      if (n2 > n1) {
+        std::cerr << "Too many destination paths specified.\n";
+      }
+      if (n1 == n2) {
+        for (int i = 0; i < n1; ++i) {
+          if (opts.list) {
+            listArchive(sourceFiles[i]);
+            std::cout << '\n';
+          }
+          if (opts.verbose)
+            extractArchive(sourceFiles[i], {'v'}, directories[i]);
+          if (!opts.verbose) {
+            extractArchive(sourceFiles[i], {}, directories[i]);
+          }
+        }
+      }
+      if (n1 > n2) {
+        // loop n2 time (no of destination)
+        for (int i = 0; i < n2; ++i) {
+          // last iteration
+          if (i == n2 - 1) {
+            // extract the rest of source files into last destination path
+            for (int j = i; j < sourceFiles.size(); ++j) {
+              if (opts.list) {
+                listArchive(sourceFiles[j]);
+                std::cout << '\n';
+              }
+              if (opts.verbose)
+                extractArchive(sourceFiles[j], {'v'}, directories[i]);
+              if (!opts.verbose) {
+                extractArchive(sourceFiles[j], {}, directories[i]);
+              }
+            }
+          }
+          // extract in respective destination
+          if (opts.list) {
+            listArchive(sourceFiles[i]);
+            std::cout << '\n';
+          }
+          if (opts.verbose)
+            extractArchive(sourceFiles[i], {'v'}, directories[i]);
+          if (!opts.verbose) {
+            extractArchive(sourceFiles[i], {}, directories[i]);
+          }
+        }
       }
     }
   }
