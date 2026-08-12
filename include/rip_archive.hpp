@@ -6,6 +6,6 @@ void createArchive(const std::string &archivePath,
                    const std::vector<std::string> &inputPaths);
 void listArchive(const std::string &archivePath);
 void extractArchive(const std::string &archivePath,
-                    const std::string &outputDir);
+                    const std::string &outputDir = ".");
 
 void runBenchmarkTest(std::string &archivePath, std::string &outputDir);

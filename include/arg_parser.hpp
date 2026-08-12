@@ -2,15 +2,17 @@
 #include "rip_archive.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iostream>
 #include <string>
 #include <vector>
 
 struct Options {
-  bool extract;
-  bool verbose;
-  bool list;
-  bool pack;
+  bool extract = false;
+  bool verbose = false;
+  bool list = false;
+  bool pack = false;
+  bool help = false;
 };
 
 class Parser {
@@ -18,6 +20,7 @@ class Parser {
   std::vector<std::string> detailedFlags;
   std::vector<std::string> sourceFiles;
   std::vector<std::string> mislaneousFlags;
+  Options opts;
 
 public:
   inline void argParser(int argc, char *argv[]);
@@ -45,45 +48,106 @@ inline void Parser::argParser(int argc, char *argv[]) {
     std::string cOption = argv[index];
     std::size_t len = cOption.length();
 
-    if (cOption[0] == '-' && argv[index][1] != '-') {
+    if (cOption.rfind("--", 0) == 0) {
+      if (len > 2) {
+        detailedFlags.push_back(cOption.substr(2));
+      }
+      continue; // Move to next argument safely
+    }
+
+    if (cOption[0] == '-') {
       // single flags like -a, -b, -x ...
-      if (len == 2) {
-        charFlags.push_back(argv[index][1]);
-      } else if (len > 2) {
-        int i = 0;
-        while (i < (len - 1)) {
-          charFlags.push_back(argv[index][i + 1]);
-          ++i;
-        }
+      int i = 0;
+      while (i < (len - 1)) {
+        charFlags.push_back(argv[index][i + 1]);
+        ++i;
       }
+      continue;
     }
 
-    if (cOption.substr(0, 2) == "--" && argv[index][2] != '-') {
-      detailedFlags.push_back(cOption.substr(2));
-    }
-    if (len > 4) {
-      if (cOption.substr(len - 3) == "rip" && len > 4) {
-        sourceFiles.push_back(cOption);
-      }
+    if (len > 4 && cOption.substr(len - 4) == ".rip") {
+      sourceFiles.push_back(cOption);
+      continue;
     }
 
-    else
-      mislaneousFlags.push_back(cOption);
-
+    mislaneousFlags.push_back(cOption);
     ++index;
   }
   execParsed();
 }
 
 inline void Parser::execParsed() {
-  // std::unordered_map<char, uint8_t> flagStatus;
-  Options option;
-  for (auto &f : charFlags) {
-    if (f == 'x')
-      option.extract = true;
-    if (f == 'l')
-      option.list = true;
-    if (f == 'v')
-      option.verbose = true;
+  namespace fs = std::filesystem;
+
+  std::vector<fs::path> directories;
+  std::vector<std::string> dFiles;
+
+  for (const auto &x : mislaneousFlags) {
+    fs::path path(x);
+
+    if (fs::is_directory(path)) {
+      directories.push_back(path);
+    }
+
+    if (fs::exists(path)) {
+      dFiles.push_back(x);
+    } else {
+      fs::create_directory(fs::path(x).parent_path());
+    }
+  }
+
+  for (char flag : charFlags) {
+    switch (flag) {
+    case 'x':
+      opts.extract = true;
+      break;
+    case 'v':
+      opts.verbose = true;
+      break;
+    case 'l':
+      opts.list = true;
+      break;
+    case 'p':
+      opts.pack = true;
+      break;
+    case 'h':
+      opts.help = true;
+      break;
+    }
+  }
+
+  for (const auto &flag : detailedFlags) {
+    if (flag == "extract")
+      opts.extract = true;
+    if (flag == "verbose")
+      opts.verbose = true;
+    if (flag == "list")
+      opts.list = true;
+    if (flag == "pack")
+      opts.pack = true;
+    if (flag == "help")
+      opts.help = true;
+  }
+
+  if (opts.help) {
+    help();
+    return;
+  }
+
+  if (opts.extract) {
+    if (opts.pack) {
+      std::cerr << "Invalid flag usage, see --help for more information\n";
+      return;
+    }
+    if (sourceFiles.empty()) {
+      std::cerr << "Error : no rip file provided\n";
+      return;
+    }
+
+    for (const auto &a : sourceFiles) {
+      if (opts.verbose) {
+        extractArchive(a)
+      }
+    }
   }
 }
