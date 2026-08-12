@@ -270,12 +270,30 @@ void listArchive(const std::string &archivePath) {
 }
 
 void extractArchive(const std::string &archivePath,
+                    const std::vector<char> modes,
                     const std::string &outputDir) {
+  bool verbose = false;
+  for (const auto &m : modes) {
+    if (m == 'v')
+      verbose = true;
+  }
+
+  if (verbose) {
+    std::cout << "[INFO] Opening archive: " << archivePath << "\n";
+  }
+
   std::ifstream in(archivePath, std::ios::binary);
   if (!in)
     throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
 
   auto entries = readToc(in);
+
+  if (verbose) {
+    std::cout << "[INFO] Found " << entries.size()
+              << " entries in Table of Contents.\n";
+    std::cout << "[INFO] Creating output directory: " << outputDir << "\n";
+  }
+
   std::filesystem::create_directories(outputDir);
   constexpr size_t bufferSize = 1 << 16;
   uint8_t buffer[bufferSize];
@@ -287,6 +305,12 @@ void extractArchive(const std::string &archivePath,
     size_t bytesRemaining = e.dataSize; // Track remaining bytes
 
     std::filesystem::path outPath = std::filesystem::path(outputDir) / e.name;
+
+    if (verbose) {
+      std::cout << "  -> Extracting: " << e.name << " (" << e.dataSize
+                << " bytes)...\n";
+    }
+
     std::ofstream out(outPath, std::ios::binary);
     if (!out) {
       throw std::runtime_error("[CRITICAL] Cannot write file " +
@@ -310,6 +334,10 @@ void extractArchive(const std::string &archivePath,
     if (eCrc32 != e.crc32) {
       std::cerr << "[WARN] CRC mismatch for " << e.name
                 << " (archive may be corrupt)\n";
+    } else if (verbose) {
+      // Verbose confirmation that CRC passed perfectly
+      std::cout << "     [OK] CRC matches: " << std::hex << e.crc32 << std::dec
+                << "\n";
     }
   }
 
@@ -322,7 +350,7 @@ void runBenchmarkTest(std::string &archivePath, std::string &outputDir) {
 
   auto startTime = std::chrono::high_resolution_clock::now();
   try {
-    extractArchive(archivePath, outputDir);
+    extractArchive(archivePath, {}, outputDir);
   } catch (const std::exception &e) {
     std::cerr << "Benchmark Failed: " << e.what() << "\n";
     return;
