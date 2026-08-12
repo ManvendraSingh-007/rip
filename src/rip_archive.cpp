@@ -291,10 +291,13 @@ void extractArchive(const std::string &archivePath,
   if (verbose) {
     std::cout << "[INFO] Found " << entries.size()
               << " entries in Table of Contents.\n";
-    std::cout << "[INFO] Creating output directory: " << outputDir << "\n";
   }
-
-  std::filesystem::create_directories(outputDir);
+  if (!std::filesystem::exists(std::filesystem::path(outputDir))) {
+    if (verbose) {
+      std::cout << "[INFO] Creating output directory: " << outputDir << "\n";
+    }
+    std::filesystem::create_directories(outputDir);
+  }
   constexpr size_t bufferSize = 1 << 16;
   uint8_t buffer[bufferSize];
 
@@ -308,7 +311,7 @@ void extractArchive(const std::string &archivePath,
 
     if (verbose) {
       std::cout << "  -> Extracting: " << e.name << " (" << e.dataSize
-                << " bytes)...\n";
+                << " bytes)...";
     }
 
     std::ofstream out(outPath, std::ios::binary);
