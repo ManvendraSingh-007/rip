@@ -78,6 +78,15 @@ inline void Parser::argParser(int argc, char *argv[]) {
   execParsed();
 }
 
+inline std::string get_short_timestamp() {
+  auto now = std::chrono::system_clock::now();
+  auto in_time_t = std::chrono::system_clock::to_time_t(now);
+
+  std::stringstream ss;
+  ss << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S");
+  return ss.str();
+}
+
 inline void Parser::execParsed() {
   namespace fs = std::filesystem;
 
@@ -133,7 +142,6 @@ inline void Parser::execParsed() {
     if (flag == "help")
       opts.help = true;
   }
-
   if (opts.help) {
     help();
     return;
@@ -141,7 +149,8 @@ inline void Parser::execParsed() {
 
   if (opts.extract) {
     if (opts.pack) {
-      std::cerr << "Invalid flag usage, see --help for more information\n";
+      std::cerr << "Invalid flag combination of x and p, see --help for more "
+                   "information\n";
       return;
     }
     if (sourceFiles.empty()) {
@@ -155,9 +164,9 @@ inline void Parser::execParsed() {
           std::cout << '\n';
         }
         if (opts.verbose)
-          extractArchive(a, {'v'});
+          extractArchive(a, {'v'}, a.substr(0, a.length() - 4));
         if (!opts.verbose) {
-          extractArchive(a);
+          extractArchive(a, {}, a.substr(0, a.length() - 4));
         }
       }
     } else if (!directories.empty()) {
@@ -207,6 +216,64 @@ inline void Parser::execParsed() {
           if (!opts.verbose) {
             extractArchive(sourceFiles[i], {}, directories[i]);
           }
+        }
+      }
+    }
+  }
+
+  if (opts.pack) {
+    if (opts.extract) {
+      std::cerr << "Invalid flag combination of p and x, see --help for more "
+                   "information\n";
+      return;
+    }
+
+    if (dFiles.empty()) {
+      std::cerr << "Error : no files provided\n";
+      return;
+    }
+    if (sourceFiles.empty()) {
+      if (opts.verbose)
+        createArchive("RIP" + get_short_timestamp() + ".rip", dFiles, {'v'});
+      if (!opts.verbose)
+        createArchive("RIP" + get_short_timestamp() + ".rip", dFiles);
+
+    } else if (!sourceFiles.empty()) {
+      size_t n1 = dFiles.size();
+      size_t n2 = sourceFiles.size();
+      if (n2 > n1) {
+        std::cerr << "Too many destination paths specified.\n";
+      }
+      if (n1 == n2) {
+        for (int i = 0; i < n1; ++i) {
+          if (opts.verbose)
+            createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
+
+          if (!opts.verbose) {
+            createArchive(sourceFiles[i], {dFiles[i]});
+          }
+        }
+      }
+      if (n1 > n2) {
+        // loop n2 time (no of archive path specified)
+        for (int i = 0; i < n2; ++i) {
+          // last iteration
+          if (i == n2 - 1) {
+            // pack the rest of files into last archive
+            for (int j = i; j < sourceFiles.size(); ++j) {
+              if (opts.verbose)
+                createArchive(sourceFiles[i],
+                              {dFiles.begin() + j, dFiles.end()}, {'v'});
+              if (!opts.verbose)
+                createArchive(sourceFiles[i],
+                              {dFiles.begin() + j, dFiles.end()});
+            }
+          }
+          // pack in respective destination
+          if (opts.verbose)
+            createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
+          if (!opts.verbose)
+            createArchive(sourceFiles[i], {dFiles[i]});
         }
       }
     }
