@@ -3,7 +3,8 @@
 #pragma once
 
 void createArchive(const std::string &archivePath,
-                   const std::vector<std::string> &inputPaths);
+                   const std::vector<std::string> &inputPaths,
+                   const std::vector<char> modes = {});
 void listArchive(const std::string &archivePath);
 void extractArchive(const std::string &archivePath,
                     const std::vector<char> modes = {},

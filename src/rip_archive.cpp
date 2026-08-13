@@ -99,26 +99,41 @@ constexpr size_t kHeaderSize = 4 + 2 + 4; // magic + version + entryCount
 
 static const Crc32 crc;
 void createArchive(const std::string &archivePath,
-                   const std::vector<std::string> &inputPaths) {
+                   const std::vector<std::string> &inputPaths,
+                   const std::vector<char> modes) {
 
   // Gather file Metadata
+  bool verbose = false;
+  for (const auto &m : modes) {
+    if (m == 'v')
+      verbose = true;
+  }
+
   std::vector<Entry> entries;
   entries.reserve(inputPaths.size());
 
-  std::cout << "[INFO] Creating archive: " << archivePath << "\n";
-  std::cout << "[INFO] Scanning " << inputPaths.size() << " input paths...\n";
+  if (verbose) {
+    std::cout << "[INFO] Creating archive: " << archivePath << "\n";
+    std::cout << "[INFO] Scanning " << inputPaths.size() << " input paths...\n";
+  }
 
   for (const auto &p : inputPaths) {
     std::filesystem::path path(p);
     std::error_code ec;
 
     if (!std::filesystem::exists(path, ec)) {
-      std::cerr << "[WARN] Skipping (does not exist): " << p << "\n";
-      continue;
+      std::cerr << "[WARN] File does not exist: " << p << "\n";
+      std::ofstream newFile(path);
+      newFile.close();
+
+      if (!std::filesystem::exists(path, ec)) {
+        std::cerr << "[ERROR] Failed to create file: " << p << "\n";
+        continue; // Skip if OS blocked file creation (e.g., permissions)
+      }
     }
 
     if (!std::filesystem::is_regular_file(path, ec)) {
-      std::cerr << "[WARN] Skipping (not an regular file): " << p << "\n";
+      std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
       continue;
     }
 
@@ -132,8 +147,14 @@ void createArchive(const std::string &archivePath,
     Entry e;
     e.name = path.filename().string();
     e.nameLen = e.name.size();
-    e.dataSize = std::filesystem::file_size(path);
+    e.dataSize = size;
     e.fullPath = p;
+
+    if (verbose) {
+      std::cout << "  -> Found file: " << e.name << " (" << e.dataSize
+                << " bytes)\n";
+    }
+
     entries.push_back(std::move(e));
   }
 
@@ -150,16 +171,21 @@ void createArchive(const std::string &archivePath,
 
   // Writing to archive
   std::ofstream out(archivePath, std::ios::binary);
-  if (!out)
-    std::runtime_error("[CRITICAL] Cannot open archive for writing " +
-                       archivePath + "\n");
+  if (!out) {
+    throw std::runtime_error("[CRITICAL] Cannot open archive for writing " +
+                             archivePath + "\n");
+  }
 
   // Writing header - magic, version, entryCount
-  out.write(kMagic, 4); // Single byte type; no endian conversion needed
+  out.write(kMagic, 4);
   writeLE<uint16_t>(out, kVersion);
   writeLE<uint32_t>(out, static_cast<uint32_t>(entries.size()));
 
   // Calculating crc32 checksum
+  if (verbose && !entries.empty()) {
+    std::cout << "[INFO] Calculating CRC32 checksums...\n";
+  }
+
   constexpr size_t kBufferSize = 1 << 16;
   uint8_t buffer[kBufferSize];
   for (auto &e : entries) {
@@ -186,6 +212,9 @@ void createArchive(const std::string &archivePath,
   }
 
   // Writing TOC
+  if (verbose) {
+    std::cout << "[INFO] Writing Table of Contents...\n";
+  }
   for (const auto &e : entries) {
     writeLE<uint64_t>(out, e.dataOffset);
     writeLE<uint64_t>(out, e.dataSize);
@@ -196,9 +225,16 @@ void createArchive(const std::string &archivePath,
   }
 
   // Writing file data
+  if (verbose && !entries.empty()) {
+    std::cout << "[INFO] Writing file payloads...\n";
+  }
   for (const auto &e : entries) {
     if (e.dataSize == 0)
       continue;
+
+    if (verbose) {
+      std::cout << "  -> Packing: " << e.name << "\n";
+    }
 
     std::ifstream in(e.fullPath, std::ios::binary);
     if (!in) {
@@ -226,7 +262,6 @@ void createArchive(const std::string &archivePath,
   std::cout << "[SUMMARY] Packaged " << entries.size()
             << " files. Total size: " << runningOffset << " bytes.\n";
 }
-
 std::vector<Entry> readToc(std::ifstream &in) {
   char magic[4];
   in.read(magic, 4);
@@ -311,7 +346,7 @@ void extractArchive(const std::string &archivePath,
 
     if (verbose) {
       std::cout << "  -> Extracting: " << e.name << " (" << e.dataSize
-                << " bytes)...";
+                << " bytes)\n";
     }
 
     std::ofstream out(outPath, std::ios::binary);
@@ -344,7 +379,7 @@ void extractArchive(const std::string &archivePath,
     }
   }
 
-  std::cout << "Extraction Complete\n";
+  std::cout << "[SUCCESS] Extraction Complete\n";
 }
 
 void runBenchmarkTest(std::string &archivePath, std::string &outputDir) {
