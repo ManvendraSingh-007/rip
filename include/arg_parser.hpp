@@ -83,7 +83,7 @@ inline std::string get_short_timestamp() {
   auto in_time_t = std::chrono::system_clock::to_time_t(now);
 
   std::stringstream ss;
-  ss << std::put_time(std::localtime(&in_time_t), "%Y%m%d_%H%M%S");
+  ss << std::put_time(std::localtime(&in_time_t), "%H%M%S");
   return ss.str();
 }
 
@@ -92,6 +92,8 @@ inline void Parser::execParsed() {
 
   std::vector<std::string> directories;
   std::vector<std::string> dFiles;
+
+  std::vector<std::string> argModes;
 
   for (const auto &x : mislaneousFlags) {
     fs::path path(x);
@@ -147,6 +149,13 @@ inline void Parser::execParsed() {
     return;
   }
 
+  if (!sourceFiles.empty() && opts.list && !opts.extract && !opts.pack) {
+    for (const auto& a: sourceFiles) {
+      listArchive(a, opts.verbose ? std::vector<char>{'v'} : std::vector<char>{});
+      std::cout << '\n';
+    }
+  }
+
   if (opts.extract) {
     if (opts.pack) {
       std::cerr << "Invalid flag combination of x and p, see --help for more "
@@ -158,6 +167,9 @@ inline void Parser::execParsed() {
       return;
     }
     if (directories.empty()) {
+      // no dirs provided
+      // so extact them to same folder named as rip file
+      // -x abc.rip -> extact to abc
       for (const auto &a : sourceFiles) {
         if (opts.list) {
           listArchive(a);
@@ -228,52 +240,108 @@ inline void Parser::execParsed() {
       return;
     }
 
-    if (dFiles.empty()) {
+    if (dFiles.empty() && directories.empty()) {
       std::cerr << "Error : no files provided\n";
       return;
     }
-    if (sourceFiles.empty()) {
-      if (opts.verbose)
-        createArchive("RIP" + get_short_timestamp() + ".rip", dFiles, {'v'});
-      if (!opts.verbose)
-        createArchive("RIP" + get_short_timestamp() + ".rip", dFiles);
+    if (!directories.empty()) {
+      // user might have provided dir to pack instead of files
 
-    } else if (!sourceFiles.empty()) {
-      size_t n1 = dFiles.size();
-      size_t n2 = sourceFiles.size();
-      if (n2 > n1) {
-        std::cerr << "Too many destination paths specified.\n";
-      }
-      if (n1 == n2) {
-        for (int i = 0; i < n1; ++i) {
+      if (sourceFiles.empty()) {
+        for (int i = 0; i < directories.size(); ++i) {
           if (opts.verbose)
-            createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
+            createArchive(directories[i] + ".rip", {directories[i]}, {'v'});
+          if (!opts.verbose)
+            createArchive(directories[i] + ".rip", {directories[i]});
+        }
+      } else if (!sourceFiles.empty()) {
+        size_t n1 = directories.size();
+        size_t n2 = sourceFiles.size();
+        if (n2 > n1) {
+          std::cerr << "Too many destination paths specified.\n";
+        }
+        if (n1 == n2) {
+          for (int i = 0; i < n1; ++i) {
+            if (opts.verbose)
+              createArchive(sourceFiles[i], {directories[i]}, {'v'});
 
-          if (!opts.verbose) {
-            createArchive(sourceFiles[i], {dFiles[i]});
+            if (!opts.verbose) {
+              createArchive(sourceFiles[i], {directories[i]});
+            }
+          }
+
+          if (n1 > n2) {
+            // loop n2 time (no of archive path specified)
+            for (int i = 0; i < n2; ++i) {
+              // last iteration
+              if (i == n2 - 1) {
+                // pack the rest of folder into last archive
+                for (int j = i; j < sourceFiles.size(); ++j) {
+                  if (opts.verbose)
+                    createArchive(sourceFiles[i],
+                                  {directories.begin() + j, directories.end()},
+                                  {'v'});
+                  if (!opts.verbose)
+                    createArchive(sourceFiles[i],
+                                  {directories.begin() + j, directories.end()});
+                }
+              }
+              // pack in respective destination
+              if (opts.verbose)
+                createArchive(sourceFiles[i], {directories[i]}, {'v'});
+              if (!opts.verbose)
+                createArchive(sourceFiles[i], {directories[i]});
+            }
           }
         }
       }
-      if (n1 > n2) {
-        // loop n2 time (no of archive path specified)
-        for (int i = 0; i < n2; ++i) {
-          // last iteration
-          if (i == n2 - 1) {
-            // pack the rest of files into last archive
-            for (int j = i; j < sourceFiles.size(); ++j) {
-              if (opts.verbose)
-                createArchive(sourceFiles[i],
-                              {dFiles.begin() + j, dFiles.end()}, {'v'});
-              if (!opts.verbose)
-                createArchive(sourceFiles[i],
-                              {dFiles.begin() + j, dFiles.end()});
+    }
+
+    if (!dFiles.empty()) {
+      if (sourceFiles.empty()) {
+        if (opts.verbose)
+          createArchive("RIP" + get_short_timestamp() + ".rip", dFiles, {'v'});
+        if (!opts.verbose)
+          createArchive("RIP" + get_short_timestamp() + ".rip", dFiles);
+
+      } else if (!sourceFiles.empty()) {
+        size_t n1 = dFiles.size();
+        size_t n2 = sourceFiles.size();
+        if (n2 > n1) {
+          std::cerr << "Too many destination paths specified.\n";
+        }
+        if (n1 == n2) {
+          for (int i = 0; i < n1; ++i) {
+            if (opts.verbose)
+              createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
+
+            if (!opts.verbose) {
+              createArchive(sourceFiles[i], {dFiles[i]});
             }
           }
-          // pack in respective destination
-          if (opts.verbose)
-            createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
-          if (!opts.verbose)
-            createArchive(sourceFiles[i], {dFiles[i]});
+
+          if (n1 > n2) {
+            // loop n2 time (no of archive path specified)
+            for (int i = 0; i < n2; ++i) {
+              // last iteration
+              if (i == n2 - 1) {
+                // pack the rest of files into last archive
+                for (int j = i; j < sourceFiles.size(); ++j) {
+                  if (opts.verbose)
+                    createArchive(sourceFiles[i],
+                                  {dFiles.begin() + j, dFiles.end()}, {'v'});
+                  if (!opts.verbose)
+                    createArchive(sourceFiles[i],
+                                  {dFiles.begin() + j, dFiles.end()});
+                }
+              }
+              // pack in respective destination
+              if (opts.verbose)
+                createArchive(sourceFiles[i], {dFiles[i]}, {'v'});
+              if (!opts.verbose)
+                createArchive(sourceFiles[i], {dFiles[i]});
+            }
+          }
         }
       }
     }
