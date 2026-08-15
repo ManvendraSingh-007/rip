@@ -58,6 +58,8 @@ filesToWork(const std::vector<std::string> &inputPaths) {
           std::filesystem::path internalPath =
               std::filesystem::relative(entry.path(), basePath);
           filesToPack.push_back({entry.path(), internalPath});
+        } else {
+          std::cerr << "[WARN] Skipping : not a regular file " << p << '\n';
         }
       }
       continue;
@@ -69,26 +71,21 @@ filesToWork(const std::vector<std::string> &inputPaths) {
 
       std::ofstream newFile(path);
       newFile.close();
-      filesToPack.push_back({path, path.filename()});
 
       if (!std::filesystem::exists(path, ec)) {
         std::cerr << "[ERROR] Failed to create file: " << p << "\n";
         continue;
       }
+      filesToPack.push_back({path, path.filename()});
       continue;
     }
 
-    if (!std::filesystem::is_regular_file(path, ec)) {
-      std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
+    if (std::filesystem::is_regular_file(path, ec)) {
+      filesToPack.push_back({path, path.filename()});
       continue;
     }
 
-    // uint64_t size = std::filesystem::file_size(path, ec);
-    // if (ec) {
-    //   std::cerr << "[WARN] Skipping (cannot read size): " << p
-    //             << " Error: " << ec.message() << "\n";
-    //   continue;
-    // }
+    std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
   }
 
   return filesToPack;
@@ -106,15 +103,18 @@ void createArchive(const std::string &archivePath,
   }
 
   const auto filesToPack = filesToWork(inputPaths);
+  if (filesToPack.empty()) {
+    std::cerr << "[WARN] No files found to pack\n";
+    return;
+  }
   std::vector<Entry> entries;
   entries.reserve(filesToPack.size());
 
   for (const auto &f : filesToPack) {
     Entry e;
-    e.name = f.archivePath.filename().string();
-    e.nameLen = e.name.size();
-    e.dataSize = std::filesystem::file_size(f.archivePath);
     e.fullPath = f.diskPath;
+    e.nameLen = e.fullPath.size();
+    e.dataSize = std::filesystem::file_size(f.diskPath);
 
     entries.push_back(std::move(e));
   }
@@ -127,7 +127,7 @@ void createArchive(const std::string &archivePath,
   // Compute toc + data offsets
   size_t toc = 0;
   for (const auto &e : entries)
-    toc += 8 + 8 + 4 + 1 + 1 + e.name.size();
+    toc += 8 + 8 + 4 + 1 + 1 + e.fullPath.size();
 
   uint64_t runningOffset = kHeaderSize + toc;
   for (auto &e : entries) {
@@ -187,7 +187,7 @@ void createArchive(const std::string &archivePath,
     writeLE<uint32_t>(out, e.crc32);
     writeLE<uint8_t>(out, e.flags);
     writeLE<uint8_t>(out, e.nameLen);
-    out.write(e.name.data(), e.name.size());
+    out.write(e.fullPath.data(), e.fullPath.size());
   }
 
   // Writing file data
@@ -199,7 +199,7 @@ void createArchive(const std::string &archivePath,
       continue;
 
     if (verbose) {
-      std::cout << "  -> Packing: " << e.name << "\n";
+      std::cout << "  -> Packing: " << e.fullPath << "\n";
     }
 
     std::ifstream in(e.fullPath, std::ios::binary);
@@ -228,6 +228,7 @@ void createArchive(const std::string &archivePath,
   std::cout << "[SUMMARY] Packaged " << entries.size()
             << " files. Total size: " << runningOffset << " bytes.\n";
 }
+
 std::vector<Entry> readToc(std::ifstream &in) {
   char magic[4];
   in.read(magic, 4);
@@ -249,24 +250,33 @@ std::vector<Entry> readToc(std::ifstream &in) {
     e.crc32 = readLE<uint32_t>(in);
     e.flags = readLE<uint8_t>(in);
     e.nameLen = readLE<uint8_t>(in);
-    e.name.resize(e.nameLen);
-    in.read(e.name.data(), e.nameLen);
+    e.fullPath.resize(e.nameLen);
+    in.read(e.fullPath.data(), e.nameLen);
   }
 
   return entries;
 }
 
-void listArchive(const std::string &archivePath) {
+void listArchive(const std::string &archivePath,
+                 const std::vector<char> modes) {
+  bool verbose = false;
+  for (const auto &m : modes) {
+    if (m == 'v')
+      verbose = true;
+  }
+
   std::ifstream in(archivePath, std::ios::binary);
   if (!in)
     throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
 
   auto entries = readToc(in);
-  std::cout << entries.size() << " entr" << (entries.size() == 1 ? "y" : "ies")
-            << ":\n";
+  std::cout << entries.size() << " entr" << (entries.size() == 1 ? "y" : "ies");
   for (const auto &e : entries) {
-    std::cout << "  " << e.name << "  (" << e.dataSize << " bytes, crc32=0x"
-              << std::hex << e.crc32 << std::dec << ")\n";
+    std::cout << e.fullPath << " (" << e.dataSize << " bytes" << ")\n";
+    if (verbose) {
+      std::cout << ", offset: " << e.dataOffset << ", crc32: " << std::hex
+                << e.crc32 << std::dec;
+    }
   }
 }
 
@@ -308,10 +318,22 @@ void extractArchive(const std::string &archivePath,
     uint32_t eCrc32 = 0;
     size_t bytesRemaining = e.dataSize; // Track remaining bytes
 
-    std::filesystem::path outPath = std::filesystem::path(outputDir) / e.name;
+    std::filesystem::path outPath =
+        std::filesystem::path(outputDir) / e.fullPath;
 
+    // if full path is like abc/bcd/a.txt
+    // and if parent path dont exist
+    // then create
+    if (!std::filesystem::exists(outPath.parent_path())) {
+      std::filesystem::create_directories(outPath.parent_path());
+    }
     if (verbose) {
-      std::cout << "  -> Extracting: " << e.name << " (" << e.dataSize
+      std::cout << "e.fullPath " << e.fullPath << '\n';
+      std::cout << "outpath parent " << outPath.parent_path().string() << '\n';
+      std::cout << "outdir " << outputDir;
+    }
+    if (verbose) {
+      std::cout << "[INFO] Extracting: " << e.fullPath << " (" << e.dataSize
                 << " bytes)\n";
     }
 
@@ -336,11 +358,11 @@ void extractArchive(const std::string &archivePath,
     }
 
     if (eCrc32 != e.crc32) {
-      std::cerr << "[WARN] CRC mismatch for " << e.name
+      std::cerr << "[WARN] CRC mismatch for " << e.fullPath
                 << " (archive may be corrupt)\n";
     } else if (verbose) {
       // Verbose confirmation that CRC passed perfectly
-      std::cout << "     [OK] CRC matches: " << std::hex << e.crc32 << std::dec
+      std::cout << "[OK] CRC matches: " << std::hex << e.crc32 << std::dec
                 << "\n";
     }
   }
