@@ -20,6 +20,7 @@
 
 #include "../include/rip_archive.hpp"
 #include "../include/crc32.hpp"
+#include "../include/rip.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -35,69 +36,64 @@
 #include <ratio>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
-// Little-endian binary I/O helpers (portable across host endianness)
-template <typename T> void writeLE(std::ostream &os, T value) {
-  static_assert(std::is_unsigned<T>::value, "writeLE expects unsigned int");
+std::vector<ArchiveEntry>
+filesToWork(const std::vector<std::string> &inputPaths) {
 
-  // Loop sizeof(T) times
-  for (size_t i = 0; i < sizeof(T); ++i) {
+  std::vector<ArchiveEntry> filesToPack;
 
-    // Grab the current byte
-    // i=0: shift 0 bits to right (gets original lowest byte)
-    // i=1: shift 8 bits to right (brings the next byte into position), and so
-    // on cast to uint8_t automatically chops off and drops any higher bits
-    //
-    // 00000000......01101011
-    // (higher)      (lower)
-    uint8_t byte = static_cast<uint8_t>(value >> (8 * i));
-    os.write(reinterpret_cast<const char *>(&byte), 1);
-  }
-}
+  for (const auto &p : inputPaths) {
+    std::filesystem::path path(p);
+    std::error_code ec;
 
-template <typename T> T readLE(std::istream &is) {
-  static_assert(std::is_unsigned<T>::value, "readLE expects unsigned int");
+    if (std::filesystem::exists(path) && std::filesystem::is_directory(path)) {
+      std::filesystem::path basePath = path.parent_path();
 
-  // final number
-  T value = 0;
-
-  for (size_t i = 0; i < sizeof(T); ++i) {
-    uint8_t byte = 0;
-
-    // Pull exactly 1 raw byte out of the stream
-    is.read(reinterpret_cast<char *>(&byte), 1);
-    if (!is) {
-      throw std::runtime_error("Unexpected EOF while reading archive");
+      for (const auto &entry :
+           std::filesystem::recursive_directory_iterator(path)) {
+        if (std::filesystem::is_regular_file(entry.status())) {
+          // Compute relative path from the parent of the input folder
+          // Ex: input = "dir", entry = "dir/sub/a.txt" -> "dir/sub/a.txt"
+          std::filesystem::path internalPath =
+              std::filesystem::relative(entry.path(), basePath);
+          filesToPack.push_back({entry.path(), internalPath});
+        }
+      }
+      continue;
     }
 
-    // 1. Cast the single byte up to the full size of T.
-    // 2. Shift it left into its proper slot (0 bits for byte 1, 8 bits for byte
-    // 2, etc.).
-    // 3. Glue it into the final 'value' using a bitwise OR.
-    value |= static_cast<T>(byte) << (8 * i);
+    if (!std::filesystem::exists(path, ec)) {
+      std::cerr << "[WARN] File does not exist: " << p << "\n";
+      std::cerr << "[WARN] Creating File: " << p << "\n";
+
+      std::ofstream newFile(path);
+      newFile.close();
+      filesToPack.push_back({path, path.filename()});
+
+      if (!std::filesystem::exists(path, ec)) {
+        std::cerr << "[ERROR] Failed to create file: " << p << "\n";
+        continue;
+      }
+      continue;
+    }
+
+    if (!std::filesystem::is_regular_file(path, ec)) {
+      std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
+      continue;
+    }
+
+    // uint64_t size = std::filesystem::file_size(path, ec);
+    // if (ec) {
+    //   std::cerr << "[WARN] Skipping (cannot read size): " << p
+    //             << " Error: " << ec.message() << "\n";
+    //   continue;
+    // }
   }
 
-  return value;
+  return filesToPack;
 }
 
-// TOC
-struct Entry {
-  std::string name;
-  std::string fullPath;
-  uint64_t dataOffset = 0;
-  uint64_t dataSize = 0;
-  uint32_t crc32 = 0;
-  uint8_t nameLen = 0;
-  uint8_t flags = 0;
-};
-
-constexpr char kMagic[4] = {'R', 'I', 'P', '1'};
-constexpr uint16_t kVersion = 1;
-constexpr size_t kHeaderSize = 4 + 2 + 4; // magic + version + entryCount
-
-static const Crc32 crc;
 void createArchive(const std::string &archivePath,
                    const std::vector<std::string> &inputPaths,
                    const std::vector<char> modes) {
@@ -109,53 +105,23 @@ void createArchive(const std::string &archivePath,
       verbose = true;
   }
 
+  const auto filesToPack = filesToWork(inputPaths);
   std::vector<Entry> entries;
-  entries.reserve(inputPaths.size());
+  entries.reserve(filesToPack.size());
+
+  for (const auto &f : filesToPack) {
+    Entry e;
+    e.name = f.archivePath.filename().string();
+    e.nameLen = e.name.size();
+    e.dataSize = std::filesystem::file_size(f.archivePath);
+    e.fullPath = f.diskPath;
+
+    entries.push_back(std::move(e));
+  }
 
   if (verbose) {
     std::cout << "[INFO] Creating archive: " << archivePath << "\n";
     std::cout << "[INFO] Scanning " << inputPaths.size() << " input paths...\n";
-  }
-
-  for (const auto &p : inputPaths) {
-    std::filesystem::path path(p);
-    std::error_code ec;
-
-    if (!std::filesystem::exists(path, ec)) {
-      std::cerr << "[WARN] File does not exist: " << p << "\n";
-      std::ofstream newFile(path);
-      newFile.close();
-
-      if (!std::filesystem::exists(path, ec)) {
-        std::cerr << "[ERROR] Failed to create file: " << p << "\n";
-        continue; // Skip if OS blocked file creation (e.g., permissions)
-      }
-    }
-
-    if (!std::filesystem::is_regular_file(path, ec)) {
-      std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
-      continue;
-    }
-
-    uint64_t size = std::filesystem::file_size(path, ec);
-    if (ec) {
-      std::cerr << "[WARN] Skipping (cannot read size): " << p
-                << " Error: " << ec.message() << "\n";
-      continue;
-    }
-
-    Entry e;
-    e.name = path.filename().string();
-    e.nameLen = e.name.size();
-    e.dataSize = size;
-    e.fullPath = p;
-
-    if (verbose) {
-      std::cout << "  -> Found file: " << e.name << " (" << e.dataSize
-                << " bytes)\n";
-    }
-
-    entries.push_back(std::move(e));
   }
 
   // Compute toc + data offsets
