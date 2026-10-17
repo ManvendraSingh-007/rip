@@ -18,9 +18,9 @@
 //   --- --- --- --- ---
 //   [raw file bytes, back to back, one per entry, in TOC order]
 
-#include "../include/rip_archive.hpp"
-#include "../include/crc32.hpp"
-#include "../include/rip.hpp"
+#include "rip_archive.hpp"
+#include "crc32.hpp"
+#include "rip.hpp"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>

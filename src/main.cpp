@@ -1,4 +1,4 @@
-#include "../include/arg_parser.hpp"
+#include "arg_parser.hpp"
 
 int main(int argc, char *argv[]) {
 

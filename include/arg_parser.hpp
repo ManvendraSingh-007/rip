@@ -149,9 +149,16 @@ inline void Parser::execParsed() {
     return;
   }
 
+  if (opts.verbose && !opts.list && !opts.extract && !opts.pack) {
+    std::cerr << "Invalid use of v, see --help for more "
+                 "information\n";
+    return;
+  }
+
   if (!sourceFiles.empty() && opts.list && !opts.extract && !opts.pack) {
-    for (const auto& a: sourceFiles) {
-      listArchive(a, opts.verbose ? std::vector<char>{'v'} : std::vector<char>{});
+    for (const auto &a : sourceFiles) {
+      listArchive(a, opts.verbose ? std::vector<char>({'v'})
+                                  : std::vector<char>{});
       std::cout << '\n';
     }
   }
