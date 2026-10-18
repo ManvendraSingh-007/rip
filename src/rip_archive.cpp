@@ -270,12 +270,14 @@ void listArchive(const std::string &archivePath,
     throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
 
   auto entries = readToc(in);
-  std::cout << entries.size() << " entr" << (entries.size() == 1 ? "y" : "ies");
+  std::cout << entries.size() << " entr"
+            << (entries.size() == 1 ? "y\n" : "ies\n");
   for (const auto &e : entries) {
-    std::cout << e.fullPath << " (" << e.dataSize << " bytes" << ")\n";
+    std::cout << e.fullPath << " (" << e.dataSize << " bytes" << ")"
+              << (verbose ? "" : "\n");
     if (verbose) {
       std::cout << ", offset: " << e.dataOffset << ", crc32: " << std::hex
-                << e.crc32 << std::dec;
+                << e.crc32 << std::dec << "\n";
     }
   }
 }
