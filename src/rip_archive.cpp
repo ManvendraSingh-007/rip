@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <ios>
@@ -33,9 +34,14 @@
 #include <iostream>
 #include <istream>
 #include <ostream>
+#include <print>
 #include <ratio>
 #include <stdexcept>
 #include <string>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <system_error>
+#include <unistd.h>
 #include <vector>
 
 std::vector<ArchiveEntry>
@@ -292,34 +298,54 @@ void extractArchive(const std::string &archivePath,
   }
 
   if (verbose) {
-    std::cout << "[INFO] Opening archive: " << archivePath << "\n";
+    std::println("[INFO] Opening archive: {}", archivePath);
   }
+
+  int fd = open(archivePath.c_str(), O_RDONLY);
+  if (fd == -1) {
+    std::println(std::cerr, "[ERROR] Failed to open file");
+    return;
+  }
+
+  struct stat sb;
+  if (fstat(fd, &sb) == -1) {
+    std::println(std::cerr, "[ERROR] Failed to get file stats");
+    close(fd);
+    return;
+  }
+
+  std::size_t fileSize = sb.st_size;
+
+  // map the entire file
+  char *mappedArchive =
+      (char *)mmap(nullptr, fileSize, PROT_READ, MAP_SHARED, fd, 0);
+  close(fd);
+  // trigger agressive kernel read-ahead into cahce
+  madvise(mappedArchive, fileSize, MADV_SEQUENTIAL);
 
   std::ifstream in(archivePath, std::ios::binary);
-  if (!in)
+  if (!in) {
+    munmap(mappedArchive, fileSize);
     throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
+  }
 
   auto entries = readToc(in);
+  in.close();
 
   if (verbose) {
-    std::cout << "[INFO] Found " << entries.size()
-              << " entries in Table of Contents.\n";
+    std::println("[INFO] Found {} entries in Table of Contents.",
+                 entries.size());
   }
+
   if (!std::filesystem::exists(std::filesystem::path(outputDir))) {
     if (verbose) {
-      std::cout << "[INFO] Creating output directory: " << outputDir << "\n";
+      std::println("[INFO] Creating output directory: {}", outputDir);
     }
     std::filesystem::create_directories(outputDir);
   }
-  constexpr size_t bufferSize = 1 << 16;
-  uint8_t buffer[bufferSize];
 
+  auto startTime = std::chrono::high_resolution_clock::now();
   for (const auto &e : entries) {
-    in.seekg(static_cast<std::streamsize>(e.dataOffset));
-
-    uint32_t eCrc32 = 0;
-    size_t bytesRemaining = e.dataSize; // Track remaining bytes
-
     std::filesystem::path outPath =
         std::filesystem::path(outputDir) / e.fullPath;
 
@@ -329,84 +355,49 @@ void extractArchive(const std::string &archivePath,
     if (!std::filesystem::exists(outPath.parent_path())) {
       std::filesystem::create_directories(outPath.parent_path());
     }
+
+    int outFd =
+        open(outPath.string().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (outFd == -1) {
+      std::println(std::cerr, "[ERROR] Failed to create output file: {}",
+                   outPath.string());
+      continue;
+    }
+
+    write(outFd, mappedArchive + e.dataOffset, e.dataSize);
+    close(outFd);
+    uint32_t eCrc32 = 0;
+
     if (verbose) {
-      std::cout << "e.fullPath " << e.fullPath << '\n';
-      std::cout << "outpath parent " << outPath.parent_path().string() << '\n';
-      std::cout << "outdir " << outputDir;
-    }
-    if (verbose) {
-      std::cout << "[INFO] Extracting: " << e.fullPath << " (" << e.dataSize
-                << " bytes)\n";
+      std::println("e.fullPath {}", e.fullPath);
+      std::println("outpath parent {}", outPath.parent_path().string());
+      std::println("outdir {}", outputDir);
+      std::println("[INFO] Extracting: {} ({} bytes))", e.fullPath, e.dataSize);
     }
 
-    std::ofstream out(outPath, std::ios::binary);
-    if (!out) {
-      throw std::runtime_error("[CRITICAL] Cannot write file " +
-                               outPath.string());
-    }
-
-    while (in && bytesRemaining > 0) {
-      // Don't read past the current entry's boundary
-      size_t toRead = std::min(bufferSize, bytesRemaining);
-      in.read(reinterpret_cast<char *>(buffer), toRead);
-      std::streamsize got = in.gcount();
-      if (got <= 0)
-        break;
-
-      eCrc32 = crc.compute(buffer, static_cast<size_t>(got), eCrc32);
-      out.write(reinterpret_cast<const char *>(buffer), got);
-      bytesRemaining -=
-          static_cast<size_t>(got); // Decrease by bytes successfully read
-    }
+    eCrc32 = crc.compute(
+        reinterpret_cast<const unsigned char *>(mappedArchive + e.dataOffset),
+        static_cast<size_t>(e.dataSize), eCrc32);
 
     if (eCrc32 != e.crc32) {
-      std::cerr << "[WARN] CRC mismatch for " << e.fullPath
-                << " (archive may be corrupt)\n";
+      std::println(std::cerr,
+                   "[WARN] CRC mismatch for {} (archive may be corrupt)",
+                   e.fullPath);
     } else if (verbose) {
       // Verbose confirmation that CRC passed perfectly
-      std::cout << "[OK] CRC matches: " << std::hex << e.crc32 << std::dec
-                << "\n";
+      std::println("[OK] CRC matches: {}", e.crc32);
     }
   }
 
-  std::cout << "[SUCCESS] Extraction Complete\n";
-}
-
-void runBenchmarkTest(std::string &archivePath, std::string &outputDir) {
-
-  std::cout << "Starting Benchamark....\n";
-
-  auto startTime = std::chrono::high_resolution_clock::now();
-  try {
-    extractArchive(archivePath, {}, outputDir);
-  } catch (const std::exception &e) {
-    std::cerr << "Benchmark Failed: " << e.what() << "\n";
-    return;
-  }
-
+  // cleanup mapped memory
+  munmap(mappedArchive, fileSize);
   auto endTime = std::chrono::high_resolution_clock::now();
-
   std::chrono::duration<double, std::milli> durationMs = endTime - startTime;
-  double durationSec = durationMs.count() / 1000.0;
 
-  std::ifstream in(archivePath, std::ios::binary);
-  auto entries = readToc(in);
+  std::println("[SUCCESS] Extraction Complete");
 
-  double totalBytesExtracted = 0;
-
-  for (const auto &e : entries) {
-    totalBytesExtracted += e.dataSize;
+  if (verbose) {
+    std::println("\nTime Taken : {}ms - {}sec", durationMs.count(),
+                 durationMs.count() / 1000);
   }
-
-  std::cout << "\n=== Benchmark Results ===\n";
-  std::cout << "Execution Time : " << durationMs.count() << " ms ("
-            << durationSec << " seconds)\n";
-
-  if (totalBytesExtracted > 0) {
-    double mbBytes =
-        static_cast<double>(totalBytesExtracted) / (1024.0 * 1024.0);
-    std::cout << "Total Data     : " << mbBytes << " MB\n";
-    std::cout << "Throughput     : " << (mbBytes / durationSec) << " MB/s\n";
-  }
-  std::cout << "=========================\n";
 }
