@@ -1,5 +1,6 @@
 #pragma once
 #include "crc32.hpp"
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <istream>
@@ -48,6 +49,17 @@ template <typename T> T readLE(std::istream &is) {
   }
 
   return value;
+}
+
+template <typename T>
+T *readFromArchiveMapped(char *&mappedArchive, std::size_t n = 0) {
+  auto *tPtr = reinterpret_cast<T *>(mappedArchive);
+  if (n == 0) {
+    mappedArchive += sizeof(T);
+  } else {
+    mappedArchive += n;
+  }
+  return tPtr;
 }
 
 // TOC
