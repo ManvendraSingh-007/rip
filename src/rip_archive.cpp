@@ -25,14 +25,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <exception>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <ios>
 #include <iosfwd>
 #include <iostream>
-#include <istream>
 #include <ostream>
 #include <print>
 #include <ratio>
@@ -235,29 +233,32 @@ void createArchive(const std::string &archivePath,
             << " files. Total size: " << runningOffset << " bytes.\n";
 }
 
-std::vector<Entry> readToc(std::ifstream &in) {
+std::vector<Entry> readToc(char *mappedArchive) {
   char magic[4];
-  in.read(magic, 4);
-  if (!in || std::memcmp(magic, kMagic, 4) != 0) {
+  std::memcpy(magic, "RIP1", 4);
+  if (std::memcmp(magic, mappedArchive, 4) != 0) {
     throw std::runtime_error(
         "[CRITICAL] Not an valip .rip archive (bad magic)");
   }
+  mappedArchive += 4;
 
-  uint16_t version = readLE<uint16_t>(in);
-  if (version != kVersion)
+  uint16_t version = *readFromArchiveMapped<uint16_t>(mappedArchive);
+  if (version != kVersion) {
     throw std::runtime_error("[CRITICAL] Unsupported archive version : " +
                              std::to_string(version));
+  }
 
-  uint32_t entryCount = readLE<uint32_t>(in);
+  uint32_t entryCount = *readFromArchiveMapped<uint32_t>(mappedArchive);
   std::vector<Entry> entries(entryCount);
   for (auto &e : entries) {
-    e.dataOffset = readLE<uint64_t>(in);
-    e.dataSize = readLE<uint64_t>(in);
-    e.crc32 = readLE<uint32_t>(in);
-    e.flags = readLE<uint8_t>(in);
-    e.nameLen = readLE<uint8_t>(in);
-    e.fullPath.resize(e.nameLen);
-    in.read(e.fullPath.data(), e.nameLen);
+    e.dataOffset = *readFromArchiveMapped<uint64_t>(mappedArchive);
+    e.dataSize = *readFromArchiveMapped<uint64_t>(mappedArchive);
+    e.crc32 = *readFromArchiveMapped<uint32_t>(mappedArchive);
+    e.flags = *readFromArchiveMapped<uint8_t>(mappedArchive);
+    e.nameLen = *readFromArchiveMapped<uint8_t>(mappedArchive);
+    char *namePtr = readFromArchiveMapped<char>(mappedArchive, e.nameLen);
+
+    e.fullPath.assign(namePtr, e.nameLen);
   }
 
   return entries;
@@ -271,19 +272,38 @@ void listArchive(const std::string &archivePath,
       verbose = true;
   }
 
-  std::ifstream in(archivePath, std::ios::binary);
-  if (!in)
+  int fd = open(archivePath.c_str(), O_RDONLY);
+  if (fd == -1) {
     throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
+  }
 
-  auto entries = readToc(in);
-  std::cout << entries.size() << " entr"
-            << (entries.size() == 1 ? "y\n" : "ies\n");
+  struct stat sb;
+  if (fstat(fd, &sb) == -1) {
+    std::println(std::cerr, "[ERROR] Failed to get file stats");
+    close(fd);
+    return;
+  }
+
+  std::size_t fileSize = sb.st_size;
+  if (fileSize == 0) {
+    return;
+  }
+
+  char *mmappedArchive =
+      (char *)mmap(NULL, fileSize, PROT_READ, MAP_SHARED, fd, 0);
+
+  close(fd);
+  madvise(mmappedArchive, fileSize, MADV_SEQUENTIAL);
+
+  auto entries = readToc(mmappedArchive);
+  munmap(mmappedArchive, fileSize);
+  std::println("{} entr{}", entries.size(),
+               (entries.size() == 1 ? "y" : "ies"));
+
   for (const auto &e : entries) {
-    std::cout << e.fullPath << " (" << e.dataSize << " bytes" << ")"
-              << (verbose ? "" : "\n");
+    std::println("{} ({} bytes)", e.fullPath, e.dataSize);
     if (verbose) {
-      std::cout << ", offset: " << e.dataOffset << ", crc32: " << std::hex
-                << e.crc32 << std::dec << "\n";
+      std::println("offset: {}, crc32: {}\n", e.dataOffset, e.crc32);
     }
   }
 }
@@ -315,7 +335,9 @@ void extractArchive(const std::string &archivePath,
   }
 
   std::size_t fileSize = sb.st_size;
-
+  if (fileSize == 0) {
+    return;
+  }
   // map the entire file
   char *mappedArchive =
       (char *)mmap(nullptr, fileSize, PROT_READ, MAP_SHARED, fd, 0);
@@ -323,14 +345,7 @@ void extractArchive(const std::string &archivePath,
   // trigger agressive kernel read-ahead into cahce
   madvise(mappedArchive, fileSize, MADV_SEQUENTIAL);
 
-  std::ifstream in(archivePath, std::ios::binary);
-  if (!in) {
-    munmap(mappedArchive, fileSize);
-    throw std::runtime_error("[CRITICAL] Cannot open archive: " + archivePath);
-  }
-
-  auto entries = readToc(in);
-  in.close();
+  auto entries = readToc(mappedArchive);
 
   if (verbose) {
     std::println("[INFO] Found {} entries in Table of Contents.",
