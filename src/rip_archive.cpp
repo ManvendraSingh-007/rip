@@ -19,6 +19,7 @@
 //   [raw file bytes, back to back, one per entry, in TOC order]
 
 #include "rip_archive.hpp"
+#include "col.hpp"
 #include "crc32.hpp"
 #include "rip.hpp"
 #include <chrono>
@@ -31,7 +32,6 @@
 #include <ios>
 #include <iosfwd>
 #include <iostream>
-#include <ostream>
 #include <print>
 #include <ratio>
 #include <stdexcept>
@@ -63,21 +63,21 @@ filesToWork(const std::vector<std::string> &inputPaths) {
               std::filesystem::relative(entry.path(), basePath);
           filesToPack.push_back({entry.path(), internalPath});
         } else {
-          std::cerr << "[WARN] Skipping : not a regular file " << p << '\n';
+          WARN("Skipping : not a regular file {}", p);
         }
       }
       continue;
     }
 
     if (!std::filesystem::exists(path, ec)) {
-      std::cerr << "[WARN] File does not exist: " << p << "\n";
-      std::cerr << "[WARN] Creating File: " << p << "\n";
+      WARN("File does not exist: {}", p);
+      WARN("Creating File: {}", p);
 
       std::ofstream newFile(path);
       newFile.close();
 
       if (!std::filesystem::exists(path, ec)) {
-        std::cerr << "[ERROR] Failed to create file: " << p << "\n";
+        ERROR("Failed to create file: {}", p);
         continue;
       }
       filesToPack.push_back({path, path.filename()});
@@ -89,7 +89,7 @@ filesToWork(const std::vector<std::string> &inputPaths) {
       continue;
     }
 
-    std::cerr << "[WARN] Skipping (not a regular file): " << p << "\n";
+    WARN("Skipping (not a regular file): {}", p);
   }
 
   return filesToPack;
@@ -108,7 +108,7 @@ void createArchive(const std::string &archivePath,
 
   const auto filesToPack = filesToWork(inputPaths);
   if (filesToPack.empty()) {
-    std::cerr << "\033[1;33m[WARN] No files found to pack\033[0m\n";
+    WARN("No files found to pack");
     return;
   }
   std::vector<Entry> entries;
@@ -124,9 +124,8 @@ void createArchive(const std::string &archivePath,
   }
 
   if (verbose) {
-    std::cout << "[INFO] Creating archive: " << archivePath << "\033[0m\n";
-    std::cout << "[INFO] Scanning " << inputPaths.size()
-              << " input paths...\033[0m\n";
+    INFO("Creating archive: {}", archivePath);
+    INFO("Scanning {} input paths...", inputPaths.size());
   }
 
   // Compute toc + data offsets
@@ -143,9 +142,8 @@ void createArchive(const std::string &archivePath,
   // Writing to archive
   std::ofstream out(archivePath, std::ios::binary);
   if (!out) {
-    throw std::runtime_error(
-        "\033[1;31m[CRITICAL] Cannot open archive for writing: " + archivePath +
-        "\033[0m\n");
+    throw std::runtime_error("[CRITICAL] Cannot open archive for writing: " +
+                             archivePath);
   }
 
   // Writing header - magic, version, entryCount
@@ -155,7 +153,7 @@ void createArchive(const std::string &archivePath,
 
   // Calculating crc32 checksum
   if (verbose && !entries.empty()) {
-    std::cout << "[INFO] Calculating CRC32 checksums...\033[0m\n";
+    INFO("Calculating CRC32 checksums...");
   }
 
   constexpr size_t kBufferSize = 1 << 16;
@@ -168,9 +166,9 @@ void createArchive(const std::string &archivePath,
 
     std::ifstream in(e.fullPath, std::ios::binary);
     if (!in) {
-      throw std::runtime_error("\033[1;31m[CRITICAL] Failed to open input file "
-                               "for CRC calculation: " +
-                               e.fullPath + "\033[0m");
+      throw std::runtime_error(
+          "[CRITICAL] Failed to open input file for CRC calculation: " +
+          e.fullPath);
     }
 
     e.crc32 = 0;
@@ -185,7 +183,7 @@ void createArchive(const std::string &archivePath,
 
   // Writing TOC
   if (verbose) {
-    std::cout << "[INFO] Writing Table of Contents...\033[0m\n";
+    INFO("Writing Table of Contents...");
   }
   for (const auto &e : entries) {
     writeLE<uint64_t>(out, e.dataOffset);
@@ -198,21 +196,21 @@ void createArchive(const std::string &archivePath,
 
   // Writing file data
   if (verbose && !entries.empty()) {
-    std::cout << "[INFO] Writing file payloads...\033[0m\n";
+    INFO("Writing file payloads...");
   }
   for (const auto &e : entries) {
     if (e.dataSize == 0)
       continue;
 
     if (verbose) {
-      std::cout << "  -> Packing:\033[0m " << e.fullPath << "\n";
+      INFO("  -> Packing: {}", e.fullPath);
     }
 
     std::ifstream in(e.fullPath, std::ios::binary);
     if (!in) {
-      throw std::runtime_error("\033[1;31m[CRITICAL] Input file went missing "
-                               "or became unreadable: " +
-                               e.fullPath + "\033[0m");
+      throw std::runtime_error(
+          "[CRITICAL] Input file went missing or became unreadable: " +
+          e.fullPath);
     }
 
     while (in) {
@@ -224,31 +222,28 @@ void createArchive(const std::string &archivePath,
     }
 
     if (!out) {
-      throw std::runtime_error("\033[1;31m[CRITICAL] Disk write failure while "
-                               "creating archive.\033[0m");
+      throw std::runtime_error(
+          "[CRITICAL] Disk write failure while creating archive.");
     }
   }
 
-  std::cout << "\033[1;32m[SUCCESS] Archive successfully created at: "
-            << archivePath << "\033[0m\n";
-  std::cout << "[SUMMARY] Packaged " << entries.size()
-            << " files. Total size: " << runningOffset << " bytes.\033[0m\n";
+  SUCCESS("Archive successfully created at: {}", archivePath);
+  INFO("Packaged {} files. Total size: {} bytes.", entries.size(),
+       runningOffset);
 }
 
 std::vector<Entry> readToc(char *mappedArchive) {
   char magic[4];
   std::memcpy(magic, "RIP1", 4);
   if (std::memcmp(magic, mappedArchive, 4) != 0) {
-    throw std::runtime_error(
-        "\033[1;31m[CRITICAL] Invalid archive magic signature\033[0m");
+    throw std::runtime_error("[CRITICAL] Invalid archive magic signature");
   }
   mappedArchive += 4;
 
   uint16_t version = *readFromArchiveMapped<uint16_t>(mappedArchive);
   if (version != kVersion) {
-    throw std::runtime_error(
-        "\033[1;31m[CRITICAL] Unsupported archive version: \033[0m" +
-        std::to_string(version));
+    throw std::runtime_error("[CRITICAL] Unsupported archive version: " +
+                             std::to_string(version));
   }
 
   uint32_t entryCount = *readFromArchiveMapped<uint32_t>(mappedArchive);
@@ -277,15 +272,13 @@ void listArchive(const std::string &archivePath,
 
   int fd = open(archivePath.c_str(), O_RDONLY);
   if (fd == -1) {
-    throw std::runtime_error(
-        "\033[1;31m[CRITICAL] Cannot open archive file: \033[0m" + archivePath);
+    throw std::runtime_error("[CRITICAL] Cannot open archive file: " +
+                             archivePath);
   }
 
   struct stat sb;
   if (fstat(fd, &sb) == -1) {
-    std::println(
-        std::cerr,
-        "\033[1;31m[ERROR] Failed to retrieve archive metadata\033[0m");
+    ERROR("Failed to retrieve archive metadata");
     close(fd);
     return;
   }
@@ -304,13 +297,13 @@ void listArchive(const std::string &archivePath,
   auto entries = readToc(mmappedArchive);
   munmap(mmappedArchive, fileSize);
 
-  std::println("[INFO] Archive contains {} entr{}\033[0m", entries.size(),
-               (entries.size() == 1 ? "y" : "ies"));
+  INFO("Archive contains {} entr{}", entries.size(),
+       (entries.size() == 1 ? "y" : "ies"));
 
   for (const auto &e : entries) {
-    std::println("  {} ({} bytes)", e.fullPath, e.dataSize);
+    INFO("  {} ({} bytes)", e.fullPath, e.dataSize);
     if (verbose) {
-      std::println("    Offset: {}, CRC32: 0x{:08X}", e.dataOffset, e.crc32);
+      INFO("    Offset: {}, CRC32: 0x{:08X}", e.dataOffset, e.crc32);
     }
   }
 }
@@ -325,21 +318,18 @@ void extractArchive(const std::string &archivePath,
   }
 
   if (verbose) {
-    std::println("[INFO] Mapping source archive: {}\033[0m", archivePath);
+    INFO("Mapping source archive: {}", archivePath);
   }
 
   int fd = open(archivePath.c_str(), O_RDONLY);
   if (fd == -1) {
-    std::println(std::cerr,
-                 "\033[1;31m[ERROR] Failed to open archive descriptor\033[0m");
+    ERROR("Failed to open archive descriptor");
     return;
   }
 
   struct stat sb;
   if (fstat(fd, &sb) == -1) {
-    std::println(
-        std::cerr,
-        "\033[1;31m[ERROR] Failed to retrieve archive metadata\033[0m");
+    ERROR("Failed to retrieve archive metadata");
     close(fd);
     return;
   }
@@ -358,15 +348,13 @@ void extractArchive(const std::string &archivePath,
   auto entries = readToc(mappedArchive);
 
   if (verbose) {
-    std::println("[INFO] Table of contents parsed successfully. "
-                 "Found {} entries.\033[0m",
-                 entries.size());
+    INFO("Table of contents parsed successfully. Found {} entries.",
+         entries.size());
   }
 
   if (!std::filesystem::exists(std::filesystem::path(outputDir))) {
     if (verbose) {
-      std::println("[INFO] Creating output directory tree: {}\033[0m",
-                   outputDir);
+      INFO("Creating output directory tree: {}", outputDir);
     }
     std::filesystem::create_directories(outputDir);
   }
@@ -383,10 +371,7 @@ void extractArchive(const std::string &archivePath,
     int outFd =
         open(outPath.string().c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (outFd == -1) {
-      std::println(std::cerr,
-                   "\033[1;31m[ERROR] Failed to write target output "
-                   "descriptor: {}\033[0m",
-                   outPath.string());
+      ERROR("Failed to write target output descriptor: {}", outPath.string());
       continue;
     }
 
@@ -395,8 +380,8 @@ void extractArchive(const std::string &archivePath,
     uint32_t eCrc32 = 0;
 
     if (verbose) {
-      std::println("[INFO] Extracting node: {} -> {} ({} bytes)\033[0m",
-                   e.fullPath, outPath.string(), e.dataSize);
+      INFO("Extracting node : {} -> {}({} bytes) ", e.fullPath,
+           outPath.string(), e.dataSize);
     }
 
     eCrc32 = crc.compute(
@@ -404,14 +389,11 @@ void extractArchive(const std::string &archivePath,
         static_cast<size_t>(e.dataSize), eCrc32);
 
     if (eCrc32 != e.crc32) {
-      std::println(std::cerr,
-                   "\033[1;33m[WARN] Integrity check failed for {} (Expected: "
-                   "0x{:08X}, Computed: 0x{:08X})\033[0m",
-                   e.fullPath, e.crc32, eCrc32);
+      WARN("Integrity check failed for {} (Expected: 0x{:08X}, Computed: "
+           "0x{:08X})",
+           e.fullPath, e.crc32, eCrc32);
     } else if (verbose) {
-      std::println(
-          "\033[1;32m[OK] Integrity verified for {} (CRC32 matches)\033[0m",
-          e.fullPath);
+      OK("Integrity verified for {} (CRC32 matches)", e.fullPath);
     }
   }
 
@@ -419,12 +401,9 @@ void extractArchive(const std::string &archivePath,
   auto endTime = std::chrono::high_resolution_clock::now();
   std::chrono::duration<double, std::milli> durationMs = endTime - startTime;
 
-  std::println(
-      "\033[1;32m[SUCCESS] Extraction pipeline finished executing\033[0m");
-
+  SUCCESS("Extraction finished executing");
   if (verbose) {
-    std::println("[INFO] Performance profile execution: {:.2f} ms "
-                 "({:.4f} seconds)\033[0m",
-                 durationMs.count(), durationMs.count() / 1000.0);
+    INFO("Performance profile execution : {:.2f} ms ({:.4f} seconds)",
+         durationMs.count(), durationMs.count() / 1000.0);
   }
 }

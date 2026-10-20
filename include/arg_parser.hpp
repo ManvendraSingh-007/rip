@@ -1,8 +1,9 @@
 #pragma once
+#include "col.hpp"
 #include "rip_archive.hpp"
 #include <cstddef>
 #include <filesystem>
-#include <iostream>
+#include <print>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,7 @@ struct Options {
   bool list = false;
   bool pack = false;
   bool help = false;
+  bool unknown = false;
 };
 
 class Parser {
@@ -28,16 +30,16 @@ public:
 };
 
 inline void Parser::help() {
-  std::cout << "Usage: rip [OPTION]... [FILES]... \n\n"
-               "-x, --extract : Extract (rip) file\n"
-               "-l, --list    : List archive contents\n"
-               "-v, --verbose : Verbose output\n"
-               "-p, --pack    : Pack files into archive\n";
+  GENERAL("Usage: rip [OPTION]... [FILES]...");
+  GENERAL("-x, --extract : Extract (rip) file");
+  GENERAL("-l, --list    : List archive contents");
+  GENERAL("-v, --verbose : Verbose output");
+  GENERAL("-p, --pack    : Pack files into archive");
 }
 
 inline void Parser::argParser(int argc, char *argv[]) {
   if (argc < 2) {
-    std::cerr << "Invalid usgae. use --help \n";
+    ERROR("Invalid usage. use --help");
     return;
   }
 
@@ -50,6 +52,8 @@ inline void Parser::argParser(int argc, char *argv[]) {
     if (cOption.rfind("--", 0) == 0) {
       if (len > 2) {
         detailedFlags.push_back(cOption.substr(2));
+      } else {
+        ERROR("Unknown flag, use --help");
       }
       ++index;
       continue; // Move to next argument safely
@@ -57,9 +61,9 @@ inline void Parser::argParser(int argc, char *argv[]) {
 
     if (cOption[0] == '-') {
       // single flags like -a, -b, -x ...
-      int i = 0;
-      while (i < (len - 1)) {
-        charFlags.push_back(argv[index][i + 1]);
+      int i = 1;
+      while (i < len) {
+        charFlags.push_back(argv[index][i]);
         ++i;
       }
       ++index;
@@ -83,7 +87,7 @@ inline std::string get_short_timestamp() {
   auto in_time_t = std::chrono::system_clock::to_time_t(now);
 
   std::stringstream ss;
-  ss << std::put_time(std::localtime(&in_time_t), "%H%M%S");
+  ss << std::put_time(std::localtime(&in_time_t), "%H-%M-%S");
   return ss.str();
 }
 
@@ -129,6 +133,8 @@ inline void Parser::execParsed() {
     case 'h':
       opts.help = true;
       break;
+    default:
+      opts.unknown = true;
     }
   }
 
@@ -143,15 +149,21 @@ inline void Parser::execParsed() {
       opts.pack = true;
     if (flag == "help")
       opts.help = true;
+    else
+      opts.unknown = true;
   }
+
   if (opts.help) {
     help();
     return;
   }
 
+  if (opts.unknown) {
+    ERROR("Unknown flag provided, see --help for more details");
+  }
+
   if (opts.verbose && !opts.list && !opts.extract && !opts.pack) {
-    std::cerr << "Invalid use of v, see --help for more "
-                 "information\n";
+    ERROR("Invalid use of v, see --help for more information");
     return;
   }
 
@@ -159,28 +171,26 @@ inline void Parser::execParsed() {
     for (const auto &a : sourceFiles) {
       listArchive(a, opts.verbose ? std::vector<char>({'v'})
                                   : std::vector<char>{});
-      std::cout << '\n';
     }
   }
 
   if (opts.extract) {
     if (opts.pack) {
-      std::cerr << "Invalid flag combination of x and p, see --help for more "
-                   "information\n";
+      ERROR("Invalid flag combination of x and p, see --help for more "
+            "information");
       return;
     }
     if (sourceFiles.empty()) {
-      std::cerr << "Error : no rip file provided\n";
+      ERROR("Error : no rip file provided");
       return;
     }
     if (directories.empty()) {
       // no dirs provided
-      // so extact them to same folder named as rip file
-      // -x abc.rip -> extact to abc
+      // so extract them to same folder named as rip file
+      // -x abc.rip -> extract to abc
       for (const auto &a : sourceFiles) {
         if (opts.list) {
           listArchive(a);
-          std::cout << '\n';
         }
         if (opts.verbose)
           extractArchive(a, {'v'}, a.substr(0, a.length() - 4));
@@ -192,13 +202,13 @@ inline void Parser::execParsed() {
       size_t n1 = sourceFiles.size();
       size_t n2 = directories.size();
       if (n2 > n1) {
-        std::cerr << "Too many destination paths specified.\n";
+        WARN("Too many destination paths specified. Aborting...");
+        return;
       }
       if (n1 == n2) {
         for (int i = 0; i < n1; ++i) {
           if (opts.list) {
             listArchive(sourceFiles[i]);
-            std::cout << '\n';
           }
           if (opts.verbose)
             extractArchive(sourceFiles[i], {'v'}, directories[i]);
@@ -216,7 +226,6 @@ inline void Parser::execParsed() {
             for (int j = i; j < sourceFiles.size(); ++j) {
               if (opts.list) {
                 listArchive(sourceFiles[j]);
-                std::cout << '\n';
               }
               if (opts.verbose)
                 extractArchive(sourceFiles[j], {'v'}, directories[i]);
@@ -228,7 +237,6 @@ inline void Parser::execParsed() {
           // extract in respective destination
           if (opts.list) {
             listArchive(sourceFiles[i]);
-            std::cout << '\n';
           }
           if (opts.verbose)
             extractArchive(sourceFiles[i], {'v'}, directories[i]);
@@ -242,13 +250,13 @@ inline void Parser::execParsed() {
 
   if (opts.pack) {
     if (opts.extract) {
-      std::cerr << "Invalid flag combination of p and x, see --help for more "
-                   "information\n";
+      ERROR("Invalid flag combination of p and x, see --help for more "
+            "information");
       return;
     }
 
     if (dFiles.empty() && directories.empty()) {
-      std::cerr << "Error : no files provided\n";
+      ERROR("Error : no files provided");
       return;
     }
     if (!directories.empty()) {
@@ -265,7 +273,7 @@ inline void Parser::execParsed() {
         size_t n1 = directories.size();
         size_t n2 = sourceFiles.size();
         if (n2 > n1) {
-          std::cerr << "Too many destination paths specified.\n";
+          WARN("Too many destination paths specified.");
         }
         if (n1 == n2) {
           for (int i = 0; i < n1; ++i) {
@@ -307,15 +315,15 @@ inline void Parser::execParsed() {
     if (!dFiles.empty()) {
       if (sourceFiles.empty()) {
         if (opts.verbose)
-          createArchive("RIP" + get_short_timestamp() + ".rip", dFiles, {'v'});
+          createArchive("rip_" + get_short_timestamp() + ".rip", dFiles, {'v'});
         if (!opts.verbose)
-          createArchive("RIP" + get_short_timestamp() + ".rip", dFiles);
+          createArchive("rip_" + get_short_timestamp() + ".rip", dFiles);
 
       } else if (!sourceFiles.empty()) {
         size_t n1 = dFiles.size();
         size_t n2 = sourceFiles.size();
         if (n2 > n1) {
-          std::cerr << "Too many destination paths specified.\n";
+          WARN("Too many destination paths specified.");
         }
         if (n1 == n2) {
           for (int i = 0; i < n1; ++i) {
